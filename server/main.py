@@ -4,9 +4,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from openai_client import get_chat_client, DEFAULT_MODEL
-from embedding import embed_texts
-from vector_store import get_store
+from server.openai_client import get_chat_client, DEFAULT_MODEL
+from server.embedding import embed_texts
+from server.vector_store import get_store
 
 
 app = FastAPI()

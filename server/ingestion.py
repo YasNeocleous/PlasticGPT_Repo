@@ -10,8 +10,10 @@ import re
 import uuid
 from typing import Iterable, Dict, Any, List
 
-from embedding import embed_texts
-from vector_store import Document, get_store
+from .embedding import embed_texts
+from .vector_store import Document, get_store
+import os
+import csv
 
 
 def _chunk_text(text: str, max_tokens: int = 400, overlap: int = 60) -> List[str]:
@@ -53,4 +55,32 @@ def ingest(items: Iterable[Dict[str, Any]]):
 
 
 __all__ = ["ingest"]
+
+
+if __name__ == "__main__":  # simple CLI
+	# Allow running: python -m server.ingestion <optional_path_to_csv>
+	csv_path = None
+	import sys
+	if len(sys.argv) > 1:
+		csv_path = sys.argv[1]
+	if not csv_path:
+		csv_path = os.path.join(os.path.dirname(__file__), "vector_db", "pubmed_plastic_surgery.csv")
+	if not os.path.exists(csv_path):
+		print(f"CSV not found: {csv_path}")
+		sys.exit(1)
+	items = []
+	with open(csv_path, newline="", encoding="utf-8") as f:
+		reader = csv.DictReader(f)
+		for row in reader:
+			text = row.get("abstract") or row.get("full_text") or ""
+			items.append({
+				"title": row.get("title", ""),
+				"text": text,
+				"pmid": row.get("pmid", ""),
+				"authors": row.get("authors", ""),
+				"date": row.get("date", ""),
+				"full_text_link": row.get("full_text_link", ""),
+			})
+	n = ingest(items)
+	print(f"Ingested chunks: {n}")
 

@@ -4,3 +4,4 @@ openai>=1.30.0
 sentence-transformers
 pytest
 httpx
+python-dotenv

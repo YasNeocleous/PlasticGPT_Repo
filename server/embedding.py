@@ -53,20 +53,31 @@ def embed_texts(texts: List[str]) -> List[List[float]]:
 	api_key = os.getenv("OPENAI_API_KEY", "")
 	print(f"[embedding] VECTOR_BACKEND={vector_backend} OPENAI_API_KEY={'set' if api_key else 'unset'} OpenAI={'yes' if OpenAI else 'no'}")
 	if OpenAI is not None and api_key and not api_key.lower().startswith("test"):
+		def batch_openai_embeddings(texts, batch_size=100):
+			client = OpenAI()
+			all_embeddings = []
+			for i in range(0, len(texts), batch_size):
+				batch = texts[i:i+batch_size]
+				# Check total tokens in batch, if too large, reduce batch size
+				# For simplicity, assume max 3000 tokens per text, adjust as needed
+				try:
+					resp = client.embeddings.create(model=OPENAI_EMBED_MODEL, input=batch)
+					all_embeddings.extend([d.embedding for d in resp.data])
+				except Exception as e:
+					print(f"[embedding] OpenAI embedding error in batch: {e}")
+					raise
+			return all_embeddings
+
 		if vector_backend == "pinecone":
 			try:
-				print("[embedding] Using OpenAI embeddings for Pinecone backend.")
-				client = OpenAI()
-				resp = client.embeddings.create(model=OPENAI_EMBED_MODEL, input=texts)
-				return [d.embedding for d in resp.data]  # type: ignore
+				print("[embedding] Using OpenAI embeddings for Pinecone backend (with batching).")
+				return batch_openai_embeddings(texts)
 			except Exception as e:
 				print(f"[embedding] OpenAI embedding error (pinecone): {e}")
 		else:
 			try:
-				print("[embedding] Using OpenAI embeddings.")
-				client = OpenAI()
-				resp = client.embeddings.create(model=OPENAI_EMBED_MODEL, input=texts)
-				return [d.embedding for d in resp.data]  # type: ignore
+				print("[embedding] Using OpenAI embeddings (with batching).")
+				return batch_openai_embeddings(texts)
 			except Exception as e:
 				print(f"[embedding] OpenAI embedding error: {e}")
 

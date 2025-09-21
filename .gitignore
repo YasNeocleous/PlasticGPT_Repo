@@ -210,3 +210,5 @@ __marimo__/
 node_modules/
 
 .vscode/
+
+pubmed_data/

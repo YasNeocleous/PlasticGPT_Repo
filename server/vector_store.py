@@ -73,12 +73,18 @@ class PineconeVectorStore:
 				spec = None
 			self._pc.create_index(name=index_name, dimension=dimension, metric="cosine", spec=spec)
 		self._index = self._pc.Index(index_name)
+		self._store_text = os.getenv("PINECONE_STORE_TEXT", "0") in {"1", "true", "True"}
+		if self._store_text:
+			print("[vector_store] PineconeVectorStore will store chunk text in metadata (PINECONE_STORE_TEXT=1).")
 
 	def add(self, ids: List[str], vectors: List[List[float]], docs: List[Document]):
-		# Only include small fields in metadata; do not store full text in metadata
+		# Only include small fields unless storing text explicitly
 		upserts = []
 		for i, v, d in zip(ids, vectors, docs):
-			meta = {k: v for k, v in d.metadata.items() if k in ["pmid", "title", "authors", "date", "full_text_link"]}
+			allowed_keys = {"pmid", "title", "authors", "date", "full_text_link", "source_id", "chunk_index", "text_length"}
+			meta = {k: val for k, val in d.metadata.items() if k in allowed_keys}
+			if self._store_text:
+				meta["text"] = d.page_content
 			upserts.append({"id": i, "values": v, "metadata": meta})
 		# Upsert in small batches to avoid Pinecone payload limits
 		batch_size = 100
@@ -88,7 +94,7 @@ class PineconeVectorStore:
 	def similarity_search(self, query_vector: List[float], k: int = 4) -> List[Document]:
 		res = self._index.query(vector=query_vector, top_k=k, include_metadata=True)
 		docs: List[Document] = []
-		matches = getattr(res, "matches", []) or getattr(res, "data", [])  # be lenient across SDK versions
+		matches = getattr(res, "matches", []) or getattr(res, "data", [])  # handle different SDKs
 		for m in matches:
 			md = getattr(m, "metadata", None) or m.get("metadata", {})  # type: ignore
 			text = (md or {}).get("text", "")

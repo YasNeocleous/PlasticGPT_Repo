@@ -6,6 +6,9 @@ to a deterministic hashing stub so that unit tests can still run quickly.
 """
 
 from __future__ import annotations
+from dotenv import load_dotenv
+
+load_dotenv()
 
 import hashlib
 from functools import lru_cache

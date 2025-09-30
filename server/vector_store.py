@@ -9,6 +9,10 @@ from __future__ import annotations
 
 import math
 from typing import List, Dict, Any, Sequence, Tuple
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 
 class Document:

@@ -206,5 +206,7 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 .env
-
 pubmed_data/
+=======
+node_modules/
+.vscode/

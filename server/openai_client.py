@@ -27,7 +27,7 @@ except Exception:
 	logging.getLogger(__name__).debug("python-dotenv not installed; server will not auto-load server/.env. Install with: pip install python-dotenv")
 
 logger = logging.getLogger(__name__)
-=======
+
 from dotenv import load_dotenv
 
 dotenv_path = os.path.join(os.path.dirname(__file__), ".env")

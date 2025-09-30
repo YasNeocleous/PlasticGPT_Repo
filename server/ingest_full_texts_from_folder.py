@@ -34,10 +34,6 @@ import sys
 from typing import Dict, Tuple, List
 import re
 import requests
-from dotenv import load_dotenv
-
-load_dotenv()
-
 
 import pandas as pd
 from tqdm import tqdm
@@ -125,7 +121,6 @@ def ingest(csv_path: str, text_dir: str, out_dir: str, min_chars: int, include_s
         raise FileNotFoundError(f"CSV not found: {csv_path}")
     if not os.path.isdir(text_dir):
         raise FileNotFoundError(f"Text directory not found: {text_dir}")
-        
 
     logger.info(f"Reading CSV: {csv_path}")
     df = pd.read_csv(csv_path, dtype=str).fillna("")

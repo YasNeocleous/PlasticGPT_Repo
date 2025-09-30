@@ -27,6 +27,20 @@ except Exception:
 	logging.getLogger(__name__).debug("python-dotenv not installed; server will not auto-load server/.env. Install with: pip install python-dotenv")
 
 logger = logging.getLogger(__name__)
+=======
+from dotenv import load_dotenv
+
+dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
+load_dotenv(dotenv_path)
+
+
+# Load environment variables from a local .env if present
+try:  # pragma: no cover - convenience for local dev
+	from dotenv import load_dotenv, find_dotenv  # type: ignore
+	load_dotenv(find_dotenv(usecwd=True), override=False)  # find nearest .env
+except Exception:  # pragma: no cover
+	pass
+
 
 try:
 	from openai import OpenAI  # type: ignore
@@ -34,8 +48,8 @@ except Exception:  # pragma: no cover - library may not be installed yet
 	OpenAI = None  # type: ignore
 
 
-DEFAULT_MODEL = "gpt-4o-mini"
-
+# Allow overriding the chat model via env var
+DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
 class OpenAIChatClient:
 	def __init__(self, model: str = DEFAULT_MODEL):

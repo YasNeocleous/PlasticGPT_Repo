@@ -14,10 +14,6 @@ from .embedding import embed_texts
 from .vector_store import Document, get_store
 import os
 import csv
-from dotenv import load_dotenv
-
-load_dotenv()
-
 
 
 def _chunk_text(text: str, max_tokens: int = 400, overlap: int = 60) -> List[str]:
@@ -84,6 +80,7 @@ if __name__ == "__main__":  # simple CLI
 				"authors": row.get("authors", ""),
 				"date": row.get("date", ""),
 				"full_text": row.get("full_text", ""),
+				"full_text_link": row.get("full_text_link", ""),
 			})
 	n = ingest(items)
 	print(f"Ingested chunks: {n}")

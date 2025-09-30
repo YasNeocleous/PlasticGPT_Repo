@@ -210,6 +210,16 @@ export default function Chatbot() {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
+    // If the backend returned a single JSON object (non-streaming), handle
+    // it as a fallback: parse JSON and append the full response text.
+    const contentType = (res.headers.get("content-type") || "").toLowerCase();
+    if (contentType.includes("application/json")) {
+      const json = await res.json();
+      const text = (json && (json.response || json.result || json.text)) || JSON.stringify(json);
+      appendAssistant(asstId, String(text));
+      return;
+    }
+
     const reader = (res.body as ReadableStream<Uint8Array>).getReader();
     const decoder = new TextDecoder("utf-8");
     let buffer = "";
@@ -246,7 +256,17 @@ export default function Chatbot() {
       headers: { ...headers, "Content-Type": "application/json", "Accept": "text/plain" },
       body: JSON.stringify(payload),
     });
-    if (!res.body || !res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const contentType = (res.headers.get("content-type") || "").toLowerCase();
+    if (contentType.includes("application/json")) {
+      const json = await res.json();
+      const text = (json && (json.response || json.result || json.text)) || JSON.stringify(json);
+      appendAssistant(asstId, String(text));
+      return;
+    }
+
+    if (!res.body) throw new Error("Empty response body");
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();

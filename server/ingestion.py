@@ -79,6 +79,7 @@ if __name__ == "__main__":  # simple CLI
 				"pmid": row.get("pmid", ""),
 				"authors": row.get("authors", ""),
 				"date": row.get("date", ""),
+				"full_text": row.get("full_text", ""),
 				"full_text_link": row.get("full_text_link", ""),
 			})
 	n = ingest(items)

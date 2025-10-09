@@ -9,6 +9,7 @@ from server.openai_client import get_chat_client, DEFAULT_MODEL
 from server.openai_client import get_status as get_openai_status
 from server.embedding import embed_texts
 from server.vector_store import get_store
+from server.retrieval import get_retrieval_pipeline
 
 from server.ingestion import ingest
 
@@ -64,14 +65,15 @@ class ChatResponse(BaseModel):
 
 @app.on_event("startup")
 async def _load_corpus():
-	"""Load and ingest CSV once on startup if the store is empty."""
-	store = get_store()
-	# If already loaded, skip
-	if getattr(store, "_data", None):
-		return
+	"""Load and ingest CSV once on startup using incremental ingestion.
+	
+	Only new/changed chunks will be embedded and stored.
+	"""
 	csv_path = os.path.join(os.path.dirname(__file__), "vector_db", "pubmed_plastic_surgery.csv")
 	if not os.path.exists(csv_path):
+		print("[startup] No CSV found at", csv_path)
 		return
+	
 	items = []
 	with open(csv_path, newline="", encoding="utf-8") as f:
 		reader = csv.DictReader(f)
@@ -85,8 +87,11 @@ async def _load_corpus():
 				"date": row.get("date", ""),
 				"full_text_link": row.get("full_text_link", ""),
 			})
+	
 	if items:
-		ingest(items)
+		print(f"[startup] Starting incremental ingestion of {len(items)} documents...")
+		stats = ingest(items, incremental=True)
+		print(f"[startup] Ingestion complete: {stats}")
 
 
 @app.post("/api/chat", response_model=ChatResponse)
@@ -94,6 +99,9 @@ async def chat(body: dict = Body(...)):
 	"""Accept either a JSON body with {"question": "...", "k": n}
 	or the frontend-style {"messages": [{role, content}, ...], "k": n}.
 	If messages are provided, the last user message is used as the question.
+	
+	Now uses the advanced retrieval pipeline with hybrid search, re-ranking,
+	and lazy chunk text loading.
 	"""
 	# Normalize incoming payloads to a question string and optional k
 	question = None
@@ -122,17 +130,25 @@ async def chat(body: dict = Body(...)):
 		raise HTTPException(status_code=422, detail=[{"type": "missing", "loc": ["body", "question"], "msg": "Field required"}])
 
 	client = get_chat_client(DEFAULT_MODEL)
-	store = get_store()
-	# Embed the query and retrieve similar docs
-	q_vec = embed_texts([question])[0]
-	docs = store.similarity_search(q_vec, k=k or 4)
+	
+	# Use new retrieval pipeline
+	retrieval_pipeline = get_retrieval_pipeline()
+	retrieval_pipeline.final_top_k = k or 4
+	results = retrieval_pipeline.retrieve(question, load_full_text=True)
+	
+	# Build context from results
 	context_blocks = []
-	for d in docs:
+	for result in results:
+		# Use full text if available, otherwise summary
+		text_excerpt = result.get("text", result.get("summary", ""))[:750]
+		metadata = result.get("metadata", {})
+		
 		context_blocks.append(
-			f"Title: {d.metadata.get('title','')}\n"  # type: ignore
-			f"Meta: { {k:v for k,v in d.metadata.items() if k!='title'} }\n"  # type: ignore
-			f"Excerpt: {d.page_content[:750]}"
+			f"Title: {metadata.get('title','')}\n"
+			f"Meta: { {k:v for k,v in metadata.items() if k not in ['title', 'chunk_path', 'summary']} }\n"
+			f"Excerpt: {text_excerpt}"
 		)
+	
 	context = "\n\n---\n".join(context_blocks) if context_blocks else "(No context found)"
 	user_message = (
 		f"Context studies (may be partial excerpts):\n{context}\n\nQuestion: {question}\n"

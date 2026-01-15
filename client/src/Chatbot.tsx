@@ -1,13 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 // import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 // import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from "@/components/ui/dropdown-menu";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
 // import { Label } from "@/components/ui/label";
 // import { Switch } from "@/components/ui/switch";
 // import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -86,7 +84,13 @@ function CodeBlock({ inline, className, children }: { inline?: boolean; classNam
   if (inline) return <code className="px-1 py-0.5 rounded bg-muted text-sm">{children}</code>;
   return (
     <div className="relative group">
-      <pre ref={ref} className={`overflow-auto rounded-lg p-4 bg-[#0d1117] text-white text-sm` + (lang ? ` language-${lang}` : "") }>
+      <pre
+        ref={ref}
+        className={
+          `overflow-auto rounded-lg bg-muted p-4 text-sm text-foreground` +
+          (lang ? ` language-${lang}` : "")
+        }
+      >
         <code className={className}>{children}</code>
       </pre>
       <Button variant="secondary" size="icon" onClick={copy} className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -99,53 +103,79 @@ function CodeBlock({ inline, className, children }: { inline?: boolean; classNam
 // ==== Message Bubble ====
 function MessageBubble({ m }: { m: ChatMessage }) {
   const isUser = m.role === "user";
-  const initials = isUser ? "U" : m.role === "assistant" ? "A" : "S";
   return (
-    <div className={`flex gap-3 ${isUser ? "justify-end" : "justify-start"}`}>
-      {!isUser && (
-        <Avatar className="h-8 w-8">
-          <AvatarFallback>🤖</AvatarFallback>
-        </Avatar>
-      )}
-      <div className={`max-w-[80%] rounded-2xl px-4 py-3 border ${isUser ? "bg-primary text-primary-foreground ml-auto" : "bg-card"}`}>
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          rehypePlugins={[rehypeHighlight]}
-          components={{ code: CodeBlock as Components['code'] }}
-        >
-          {m.content}
-        </ReactMarkdown>
+    <div className={`flex min-w-0 ${isUser ? "justify-end" : "justify-start"}`}>
+      <div
+        className={
+          `min-w-0 max-w-[85%] rounded-3xl px-3 py-2.5 text-sm leading-relaxed ` +
+          (isUser
+            ? "bg-primary text-primary-foreground ml-auto"
+            : "bg-transparent text-foreground")
+        }
+      >
+        <div className="min-w-0 break-words [overflow-wrap:anywhere] [&_a]:underline [&_a]:underline-offset-4 [&_p]:leading-relaxed [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            rehypePlugins={[rehypeHighlight]}
+            components={{ code: CodeBlock as Components['code'] }}
+          >
+            {m.content}
+          </ReactMarkdown>
+        </div>
   {/* ...existing code... */}
       </div>
-      {isUser && (
-        <Avatar className="h-8 w-8">
-          <AvatarFallback>{initials}</AvatarFallback>
-        </Avatar>
-      )}
     </div>
   );
 }
 
 // ==== Main Component ====
 export default function Chatbot() {
-  const [messages, setMessages] = useState<ChatMessage[]>([{
-    id: rid(), role: "assistant", content: "Hi! Ask me anything.", createdAt: Date.now()
-  }]);
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   // const [systemPrompt, setSystemPrompt] = useState("You are a helpful, concise assistant.");
   // const [temperature, setTemperature] = useState(0.7);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [isDark, setIsDark] = useState(false);
+  const [isDark, setIsDark] = useState(() => {
+    const stored = localStorage.getItem("theme");
+    return stored === "dark";
+  });
   // ...existing code...
-  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  const isChatActive = messages.length > 0 || isStreaming;
+  const bottomRef = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement | null>(null);
+  const messagesViewportRef = useRef<HTMLDivElement | null>(null);
+  const autoScrollRef = useRef(true);
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", isDark);
+    localStorage.setItem("theme", isDark ? "dark" : "light");
   }, [isDark]);
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+    const viewport = messagesViewportRef.current;
+    if (!viewport || !autoScrollRef.current) return;
+    viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
   }, [messages.length, isStreaming]);
+
+  const onMessagesScroll = () => {
+    const viewport = messagesViewportRef.current;
+    if (!viewport) return;
+    const distanceFromBottom = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight;
+    autoScrollRef.current = distanceFromBottom < 24;
+  };
+
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+
+    // Auto-grow up to a max height, then scroll.
+    const maxPx = 160;
+    el.style.height = "auto";
+    const next = Math.min(el.scrollHeight, maxPx);
+    el.style.height = `${next + 2}px`;
+    el.style.overflowY = el.scrollHeight > maxPx ? "auto" : "hidden";
+  }, [input]);
 
   // ...existing code...
 
@@ -158,7 +188,7 @@ export default function Chatbot() {
     const content = input.trim();
     if (!content || isStreaming) return;
 
-  const userMsg: ChatMessage = { id: rid(), role: "user", content, createdAt: Date.now() };
+    const userMsg: ChatMessage = { id: rid(), role: "user", content, createdAt: Date.now() };
     const asstMsg: ChatMessage = { id: rid(), role: "assistant", content: "", createdAt: Date.now() };
     setMessages((prev) => [...prev, userMsg, asstMsg]);
     setInput("");
@@ -271,73 +301,118 @@ export default function Chatbot() {
 
   return (
     <TooltipProvider>
-      <div className="mx-auto max-w-5xl p-4 md:p-6 space-y-4">
-        <header className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <img src="/logo.png" alt="Logo" className="h-8 w-auto mr-2" />
-            <Badge variant={isStreaming ? "default" : "secondary"} className="ml-1">
-              {isStreaming ? "Streaming" : "Idle"}
-            </Badge>
-          </div>
-          <div className="flex items-center gap-2">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button variant="outline" size="icon" onClick={() => setIsDark((d) => !d)}>
-                  {isDark ? <Sun className="h-4 w-4"/> : <Moon className="h-4 w-4"/>}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Toggle theme</TooltipContent>
-            </Tooltip>
+      <div className="min-h-screen bg-background">
+        <header className="fixed inset-x-0 top-0 z-10 border-b bg-background/90 backdrop-blur supports-[backdrop-filter]:bg-background/75">
+          <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-3 py-3 md:px-4">
+            <div className="flex items-center gap-3">
+              <img
+                src="/logo.png"
+                alt="Logo"
+                className="h-8 w-auto shrink-0 object-contain rounded-md"
+              />
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge variant={isStreaming ? "default" : "secondary"}>
+                {isStreaming ? "Streaming" : "Idle"}
+              </Badge>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="outline" size="icon" onClick={() => setIsDark((d) => !d)}>
+                    {isDark ? <Sun className="h-4 w-4"/> : <Moon className="h-4 w-4"/>}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Toggle theme</TooltipContent>
+              </Tooltip>
+            </div>
           </div>
         </header>
 
-        <Card className="border rounded-2xl overflow-hidden">
-          <CardHeader className="pb-0">
-            <CardTitle className="text-base">Conversation</CardTitle>
-          </CardHeader>
-          <CardContent className="pt-4">
-            <div className="border rounded-xl p-2 bg-muted/30">
-              <ScrollArea className="h-[55vh]" ref={scrollRef as React.RefObject<HTMLDivElement>}>
-                <div className="p-3 space-y-4">
-                  {messages.map((m) => (
-                    <MessageBubble key={m.id} m={m} />
-                  ))}
-                </div>
-              </ScrollArea>
-              <div className="p-3 border-t mt-2">
-                {/* ...existing code... */}
-                <div className="flex items-end gap-2">
-                  <div className="flex-1">
+        <main className="mx-auto flex min-h-screen max-w-3xl flex-col px-3 pb-3 pt-16 md:px-4 md:pb-4">
+          <div className="pb-3 pt-2 text-center text-xs text-muted-foreground">
+            Specialty AI chatbot for plastic surgeons, focused on plastic &amp; reconstructive surgery.
+          </div>
+          <div className="flex flex-1 items-center justify-center">
+            <Card className={`flex w-full flex-col overflow-hidden rounded-2xl border-0 bg-transparent shadow-none ${isChatActive ? "max-h-[82vh]" : ""}`}>
+              {isChatActive ? (
+                <CardContent className="flex min-h-0 flex-1 flex-col pt-0">
+                  <div className="flex min-h-0 flex-1 flex-col rounded-xl bg-background">
+                    <div
+                      ref={messagesViewportRef}
+                      onScroll={onMessagesScroll}
+                      className="min-h-0 flex-1 overflow-y-auto"
+                    >
+                      <div className="p-3 space-y-3">
+                        {messages.map((m) => (
+                          <MessageBubble key={m.id} m={m} />
+                        ))}
+                        <div ref={bottomRef} />
+                      </div>
+                    </div>
+                    <div className="bg-background p-3">
+                      {/* ...existing code... */}
+                      <div className="flex items-end gap-2">
+                        <div className="flex-1">
+                          <div className="relative">
+                            <Textarea
+                              ref={inputRef}
+                              value={input}
+                              onChange={(e) => setInput(e.target.value)}
+                              rows={1}
+                              placeholder="Ask your question…"
+                              className="min-h-[44px] resize-none overflow-hidden rounded-3xl px-5 py-3 pr-14 leading-6"
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+                              }}
+                            />
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant={isStreaming ? "destructive" : "secondary"}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full"
+                              onClick={isStreaming ? stopStreaming : sendMessage}
+                              disabled={!isStreaming && !input.trim()}
+                              aria-label={isStreaming ? "Stop" : "Send"}
+                            >
+                              {isStreaming ? <StopCircle className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+                            </Button>
+                          </div>
+                          {/* ...existing code... */}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              ) : (
+                <CardContent className="p-3">
+                  <div className="relative">
                     <Textarea
+                      ref={inputRef}
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
-                      rows={3}
+                      rows={1}
                       placeholder="Ask your question…"
+                      className="min-h-[44px] resize-none overflow-hidden rounded-3xl px-5 py-3 pr-14 leading-6"
                       onKeyDown={(e) => {
                         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }
                       }}
                     />
-                    {/* ...existing code... */}
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="secondary"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full"
+                      onClick={sendMessage}
+                      disabled={!input.trim()}
+                      aria-label="Send"
+                    >
+                      <Send className="h-4 w-4" />
+                    </Button>
                   </div>
-                  <div className="flex gap-2">
-                    {/* Clear button removed */}
-                    {isStreaming ? (
-                      <Button variant="destructive" onClick={stopStreaming}>
-                        <StopCircle className="h-4 w-4 mr-1"/>Stop
-                      </Button>
-                    ) : (
-                      <Button onClick={sendMessage} disabled={!input.trim()}>
-                        <Send className="h-4 w-4 mr-1"/>Send
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-  {/* Footer removed as requested */}
+                </CardContent>
+              )}
+            </Card>
+          </div>
+        </main>
       </div>
     </TooltipProvider>
   );

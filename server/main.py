@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import json
@@ -7,18 +8,43 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from server.openai_client import get_chat_client, DEFAULT_MODEL
+from server.openai_client import get_status as get_openai_status
 from server.embedding import embed_texts
 from server.vector_store import get_store
+
+from server.ingestion import ingest
+
+import os
+import csv
+
+from dotenv import load_dotenv
+
+dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
+load_dotenv(dotenv_path)
 
 
 app = FastAPI()
 app.add_middleware(
 	CORSMiddleware,
-	allow_origins=["http://localhost:3000", "http://localhost:5173"],
+	# Allow common local dev origins (both localhost and 127.0.0.1 variants)
+	allow_origins=[
+		"http://localhost:3000",
+		"http://localhost:5173",
+		"http://127.0.0.1:3000",
+		"http://127.0.0.1:5173",
+	],
 	allow_credentials=True,
 	allow_methods=["*"],
 	allow_headers=["*"],
 )
+
+# Endpoint to check which vector backend is active
+@app.get("/vector_backend")
+async def vector_backend():
+	store = get_store()
+	if hasattr(store, "_index_name"):
+		return {"backend": "pinecone", "index": getattr(store, "_index_name", None)}
+	return {"backend": "memory"}
 
 
 SYSTEM_PROMPT = """You are a friendly, expert assistant on plastic and reconstructive surgery.
@@ -97,6 +123,17 @@ async def chat(req: ChatRequest, stream: int = Query(0)):
 async def health():
 	return {"status": "ok"}
 
+@app.get("/vector_backend")
+async def vector_backend():
+	store = get_store()
+	if hasattr(store, "_index_name"):
+		return {"backend": "pinecone", "index": getattr(store, "_index_name", None)}
+	return {"backend": "memory"}
 
-__all__ = ["app"]
+@app.get("/api/openai_status")
+async def openai_status():
+	"""Return diagnostic info about the OpenAI client (whether it's stubbed)."""
+	return get_openai_status()
 
+
+__all__ = ["app", "chat", "vector_backend"]

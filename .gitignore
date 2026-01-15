@@ -208,3 +208,9 @@ __marimo__/
 .env
 
 server/pubmed_data/*
+=======
+pubmed_data/
+=======
+node_modules/
+.vscode/
+

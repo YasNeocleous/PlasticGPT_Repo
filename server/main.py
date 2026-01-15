@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from fastapi import FastAPI
+import json
+from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from server.openai_client import get_chat_client, DEFAULT_MODEL
@@ -41,8 +43,18 @@ class ChatResponse(BaseModel):
 	response: str
 
 
-@app.post("/api/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest):
+async def generate_sse_stream(answer: str):
+	"""Yield SSE formatted chunks for the frontend."""
+	# Send the answer in chunks to simulate streaming
+	chunk_size = 20  # characters per chunk
+	for i in range(0, len(answer), chunk_size):
+		chunk = answer[i:i + chunk_size]
+		yield f"data: {json.dumps({'delta': chunk})}\n\n"
+	yield "data: [DONE]\n\n"
+
+
+@app.post("/api/chat")
+async def chat(req: ChatRequest, stream: int = Query(0)):
 	client = get_chat_client(DEFAULT_MODEL)
 	store = get_store()
 	# Get the last user message as the question
@@ -66,6 +78,18 @@ async def chat(req: ChatRequest):
 		system=SYSTEM_PROMPT,
 		messages=[{"role": "user", "content": user_message}],
 	)
+	
+	# If streaming requested, return SSE format
+	if stream:
+		return StreamingResponse(
+			generate_sse_stream(answer),
+			media_type="text/event-stream",
+			headers={
+				"Cache-Control": "no-cache",
+				"Connection": "keep-alive",
+			}
+		)
+	
 	return ChatResponse(response=answer)
 
 

@@ -1,24 +1,26 @@
 
 from __future__ import annotations
 
+import os
+import csv
+import glob
+
 from fastapi import FastAPI, Body, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
-from server.openai_client import get_chat_client, DEFAULT_MODEL
-from server.openai_client import get_status as get_openai_status
-from server.embedding import embed_texts
-from server.vector_store import get_store
-
-from server.ingestion import ingest
-
-import os
-import csv
-
 from dotenv import load_dotenv
 
+# Load environment first
 dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
 load_dotenv(dotenv_path)
+
+# Google AI only
+from server.google_ai_client import get_chat_client, DEFAULT_MODEL
+from server.google_ai_client import get_status as get_ai_status
+
+from server.embedding import embed_texts
+from server.vector_store import get_store
+from server.ingestion import ingest
 
 
 app = FastAPI()
@@ -36,13 +38,10 @@ app.add_middleware(
 	allow_headers=["*"],
 )
 
-# Endpoint to check which vector backend is active
+# Endpoint to check status
 @app.get("/vector_backend")
 async def vector_backend():
-	store = get_store()
-	if hasattr(store, "_index_name"):
-		return {"backend": "pinecone", "index": getattr(store, "_index_name", None)}
-	return {"backend": "memory"}
+	return {"backend": "memory", "status": "ok"}
 
 
 SYSTEM_PROMPT = """You are a friendly, expert assistant on plastic and reconstructive surgery.
@@ -64,29 +63,87 @@ class ChatResponse(BaseModel):
 
 @app.on_event("startup")
 async def _load_corpus():
-	"""Load and ingest CSV once on startup if the store is empty."""
+	"""Load and ingest full text files on startup."""
+	print("[startup] Starting application...")
 	store = get_store()
+	
 	# If already loaded, skip
 	if getattr(store, "_data", None):
+		print("[startup] Store already has data, skipping ingestion.")
 		return
-	csv_path = os.path.join(os.path.dirname(__file__), "vector_db", "pubmed_plastic_surgery.csv")
-	if not os.path.exists(csv_path):
+	
+	# Load from full_texts folder
+	full_texts_dir = os.path.join(os.path.dirname(__file__), "pubmed_data", "full_texts")
+	
+	if not os.path.exists(full_texts_dir):
+		print(f"[startup] No full_texts folder found at {full_texts_dir}")
+		print("[startup] Application ready (no documents loaded).")
 		return
+	
+	txt_files = glob.glob(os.path.join(full_texts_dir, "*.txt"))
+	print(f"[startup] Found {len(txt_files)} text files in {full_texts_dir}")
+	
+	if not txt_files:
+		print("[startup] Application ready (no documents loaded).")
+		return
+	
+	# Limit documents for faster startup (set MAX_STARTUP_DOCS=0 for all)
+	max_items = int(os.getenv("MAX_STARTUP_DOCS", "20"))
+	if max_items > 0 and len(txt_files) > max_items:
+		print(f"[startup] Limiting to first {max_items} documents for faster startup.")
+		print(f"[startup] Set MAX_STARTUP_DOCS=0 in .env to load all documents.")
+		txt_files = txt_files[:max_items]
+	
 	items = []
-	with open(csv_path, newline="", encoding="utf-8") as f:
-		reader = csv.DictReader(f)
-		for row in reader:
-			text = row.get("abstract") or row.get("full_text") or ""
+	for filepath in txt_files:
+		try:
+			with open(filepath, "r", encoding="utf-8") as f:
+				content = f.read()
+			
+			# Extract PMCID from filename
+			filename = os.path.basename(filepath)
+			pmcid = filename.replace(".txt", "")
+			
+			# Try to extract title from first few lines
+			lines = content.split("\n")
+			title = ""
+			for line in lines[:20]:
+				line = line.strip()
+				# Skip short lines, headers, IDs
+				if len(line) > 30 and not line.startswith("==") and not line.startswith("http"):
+					title = line[:200]  # Limit title length
+					break
+			
+			if not title:
+				title = pmcid
+			
 			items.append({
-				"title": row.get("title", ""),
-				"text": text,
-				"pmid": row.get("pmid", ""),
-				"authors": row.get("authors", ""),
-				"date": row.get("date", ""),
-				"full_text_link": row.get("full_text_link", ""),
+				"title": title,
+				"text": content,
+				"pmcid": pmcid,
+				"source_file": filename,
 			})
+		except Exception as e:
+			print(f"[startup] Error reading {filepath}: {e}")
+	
+	print(f"[startup] Loaded {len(items)} documents.")
+	
 	if items:
-		ingest(items)
+		try:
+			print("[startup] Ingesting documents (this may take a moment)...")
+			ingest(items)
+			print(f"[startup] Ingested {len(items)} documents successfully!")
+			
+			# Save cache for faster startup next time
+			if store.save_cache():
+				print("[startup] Cache saved! Next startup will be instant.")
+		except Exception as e:
+			print(f"[startup] ERROR during ingestion: {e}")
+			import traceback
+			traceback.print_exc()
+			print("[startup] Continuing without documents.")
+	
+	print("[startup] Application ready!")
 
 
 @app.post("/api/chat", response_model=ChatResponse)
@@ -148,17 +205,13 @@ async def chat(body: dict = Body(...)):
 async def health():
 	return {"status": "ok"}
 
-@app.get("/vector_backend")
-async def vector_backend():
-	store = get_store()
-	if hasattr(store, "_index_name"):
-		return {"backend": "pinecone", "index": getattr(store, "_index_name", None)}
-	return {"backend": "memory"}
 
-@app.get("/api/openai_status")
-async def openai_status():
-	"""Return diagnostic info about the OpenAI client (whether it's stubbed)."""
-	return get_openai_status()
+@app.get("/api/ai_status")
+async def ai_status():
+	"""Return diagnostic info about the AI client."""
+	status = get_ai_status()
+	status["provider"] = "google"
+	return status
 
 
-__all__ = ["app", "chat", "vector_backend"]
+__all__ = ["app", "chat"]

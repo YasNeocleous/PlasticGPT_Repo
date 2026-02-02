@@ -1,133 +1,190 @@
-"""Simple in-memory vector store (placeholder for Pinecone / other DB).
+"""Vector store with caching support.
 
-For initial development we keep an in-memory list of (id, vector, metadata,
-content). This can later be replaced with Pinecone, Chroma, etc. The interface
-is intentionally tiny: add() and similarity_search().
+Embeddings are computed once and cached to a JSON file.
+On startup, the cache is loaded instead of re-computing embeddings.
+Optionally syncs to Google Cloud Storage for production.
 """
 
 from __future__ import annotations
 
-import math
 import os
+import json
+import math
+import logging
 from typing import List, Dict, Any, Sequence, Tuple
-from dotenv import load_dotenv
+from pathlib import Path
 
-dotenv_path = os.path.join(os.path.dirname(__file__), ".env")
-load_dotenv(dotenv_path)
+logger = logging.getLogger(__name__)
+
+# Load .env
+try:
+    from dotenv import load_dotenv
+    env_path = Path(__file__).parent / ".env"
+    if env_path.exists():
+        load_dotenv(dotenv_path=env_path)
+except Exception:
+    pass
 
 
 class Document:
-	def __init__(self, page_content: str, metadata: Dict[str, Any] | None = None):
-		self.page_content = page_content
-		self.metadata = metadata or {}
+    """A document with content and metadata."""
+    def __init__(self, page_content: str, metadata: Dict[str, Any] | None = None):
+        self.page_content = page_content
+        self.metadata = metadata or {}
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {"page_content": self.page_content, "metadata": self.metadata}
+    
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Document":
+        return cls(page_content=data["page_content"], metadata=data.get("metadata", {}))
 
 
-def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
-	num = sum(x * y for x, y in zip(a, b))
-	da = math.sqrt(sum(x * x for x in a))
-	db = math.sqrt(sum(y * y for y in b))
-	if da == 0 or db == 0:
-		return 0.0
-	return num / (da * db)
+def _cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
+    """Calculate cosine similarity between two vectors."""
+    dot_product = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot_product / (norm_a * norm_b)
 
 
-class InMemoryVectorStore:
-	def __init__(self):
-		self._data: List[Tuple[str, List[float], Document]] = []
+class CachedVectorStore:
+    """Vector store with local file caching and optional Cloud Storage sync."""
+    
+    def __init__(self, cache_path: str | None = None):
+        self._data: List[Tuple[str, List[float], Document]] = []
+        self._cache_path = cache_path or os.path.join(
+            os.path.dirname(__file__), "vector_cache.json"
+        )
+        self._gcs_bucket = os.getenv("GCS_CACHE_BUCKET", "")
+        self._gcs_path = os.getenv("GCS_CACHE_PATH", "vector_cache.json")
 
-	def add(self, ids: List[str], vectors: List[List[float]], docs: List[Document]):
-		for i, v, d in zip(ids, vectors, docs):
-			self._data.append((i, v, d))
+    def add(self, ids: List[str], vectors: List[List[float]], docs: List[Document]):
+        """Add documents with their embeddings."""
+        for doc_id, vector, doc in zip(ids, vectors, docs):
+            self._data.append((doc_id, vector, doc))
+        print(f"[vector_store] Added {len(ids)} documents. Total: {len(self._data)}")
 
-	def similarity_search(self, query_vector: List[float], k: int = 4) -> List[Document]:
-		scored = [(_cosine(query_vector, vec), doc) for _id, vec, doc in self._data]
-		scored.sort(key=lambda x: x[0], reverse=True)
-		return [d for _s, d in scored[:k]]
+    def similarity_search(self, query_vector: List[float], k: int = 4) -> List[Document]:
+        """Find the k most similar documents to the query vector."""
+        if not self._data:
+            return []
+        
+        scored = [
+            (_cosine_similarity(query_vector, vec), doc) 
+            for _id, vec, doc in self._data
+        ]
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [doc for _score, doc in scored[:k]]
+    
+    def save_cache(self) -> bool:
+        """Save embeddings to local cache file (and optionally GCS)."""
+        if not self._data:
+            return False
+        
+        cache_data = {
+            "version": 1,
+            "count": len(self._data),
+            "items": [
+                {"id": doc_id, "vector": vector, "document": doc.to_dict()}
+                for doc_id, vector, doc in self._data
+            ]
+        }
+        
+        try:
+            with open(self._cache_path, "w", encoding="utf-8") as f:
+                json.dump(cache_data, f)
+            print(f"[vector_store] Saved cache: {len(self._data)} items")
+            
+            if self._gcs_bucket:
+                self._upload_to_gcs(cache_data)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save cache: {e}")
+            return False
+    
+    def load_cache(self) -> bool:
+        """Load embeddings from cache (tries GCS first, then local)."""
+        # Try GCS first
+        if self._gcs_bucket and self._download_from_gcs():
+            return True
+        
+        # Fall back to local
+        if not os.path.exists(self._cache_path):
+            return False
+        
+        try:
+            with open(self._cache_path, "r", encoding="utf-8") as f:
+                cache_data = json.load(f)
+            
+            self._data = []
+            for item in cache_data.get("items", []):
+                doc = Document.from_dict(item["document"])
+                self._data.append((item["id"], item["vector"], doc))
+            
+            print(f"[vector_store] Loaded {len(self._data)} items from local cache")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to load cache: {e}")
+            return False
+    
+    def _upload_to_gcs(self, cache_data: Dict[str, Any]):
+        """Upload cache to Google Cloud Storage."""
+        try:
+            from google.cloud import storage
+            client = storage.Client()
+            bucket = client.bucket(self._gcs_bucket)
+            blob = bucket.blob(self._gcs_path)
+            blob.upload_from_string(json.dumps(cache_data), content_type="application/json")
+            print(f"[vector_store] Uploaded to gs://{self._gcs_bucket}/{self._gcs_path}")
+        except Exception as e:
+            logger.debug(f"GCS upload skipped: {e}")
+    
+    def _download_from_gcs(self) -> bool:
+        """Download cache from Google Cloud Storage."""
+        try:
+            from google.cloud import storage
+            client = storage.Client()
+            bucket = client.bucket(self._gcs_bucket)
+            blob = bucket.blob(self._gcs_path)
+            
+            if not blob.exists():
+                return False
+            
+            cache_data = json.loads(blob.download_as_string())
+            self._data = []
+            for item in cache_data.get("items", []):
+                doc = Document.from_dict(item["document"])
+                self._data.append((item["id"], item["vector"], doc))
+            
+            print(f"[vector_store] Loaded {len(self._data)} items from GCS cache")
+            return True
+        except Exception as e:
+            logger.debug(f"GCS download skipped: {e}")
+            return False
+    
+    def clear(self):
+        """Clear all stored documents."""
+        self._data = []
 
 
-# Optional Pinecone backend
-try:  # pragma: no cover - optional dependency
-	from pinecone import Pinecone, ServerlessSpec  # type: ignore
-except Exception:  # pragma: no cover
-	Pinecone = None  # type: ignore
-	ServerlessSpec = None  # type: ignore
+# Singleton instance
+_store: CachedVectorStore | None = None
 
 
-class PineconeVectorStore:
-	def __init__(self, index_name: str = "plasticgpt", dimension: int = 1536):
-		if Pinecone is None:
-			raise RuntimeError("Pinecone SDK not installed. pip install pinecone-client")
-		api_key = os.getenv("PINECONE_API_KEY", "")
-		if not api_key:
-			raise RuntimeError("PINECONE_API_KEY not set")
-		self._pc = Pinecone(api_key=api_key)
-		self._index_name = index_name
-		self._dimension = dimension
-		names = [i["name"] if isinstance(i, dict) else getattr(i, "name", None) for i in self._pc.list_indexes()]  # type: ignore
-		if index_name not in names:
-			# Default to AWS us-east-1 serverless
-			spec = None
-			try:
-				spec = ServerlessSpec(cloud=os.getenv("PINECONE_CLOUD", "aws"), region=os.getenv("PINECONE_REGION", "us-east-1"))
-			except Exception:
-				spec = None
-			self._pc.create_index(name=index_name, dimension=dimension, metric="cosine", spec=spec)
-		self._index = self._pc.Index(index_name)
-		self._store_text = os.getenv("PINECONE_STORE_TEXT", "0") in {"1", "true", "True"}
-		if self._store_text:
-			print("[vector_store] PineconeVectorStore will store chunk text in metadata (PINECONE_STORE_TEXT=1).")
-
-	def add(self, ids: List[str], vectors: List[List[float]], docs: List[Document]):
-		# Only include small fields unless storing text explicitly
-		upserts = []
-		for i, v, d in zip(ids, vectors, docs):
-			allowed_keys = {"pmid", "title", "authors", "date", "full_text_link", "source_id", "chunk_index", "text_length"}
-			meta = {k: val for k, val in d.metadata.items() if k in allowed_keys}
-			if self._store_text:
-				meta["text"] = d.page_content
-			upserts.append({"id": i, "values": v, "metadata": meta})
-		# Upsert in small batches to avoid Pinecone payload limits
-		batch_size = 100
-		for j in range(0, len(upserts), batch_size):
-			self._index.upsert(vectors=upserts[j:j+batch_size])
-
-	def similarity_search(self, query_vector: List[float], k: int = 4) -> List[Document]:
-		res = self._index.query(vector=query_vector, top_k=k, include_metadata=True)
-		docs: List[Document] = []
-		matches = getattr(res, "matches", []) or getattr(res, "data", [])  # handle different SDKs
-		for m in matches:
-			md = getattr(m, "metadata", None) or m.get("metadata", {})  # type: ignore
-			text = (md or {}).get("text", "")
-			docs.append(Document(page_content=text, metadata={k: v for k, v in (md or {}).items() if k != "text"}))
-		return docs
+def get_store() -> CachedVectorStore:
+    """Get the shared vector store instance."""
+    global _store
+    if _store is None:
+        _store = CachedVectorStore()
+        if _store.load_cache():
+            print("[vector_store] Using cached embeddings (fast startup!)")
+        else:
+            print("[vector_store] No cache found, will compute embeddings")
+    return _store
 
 
-_shared_store: Any | None = None
-
-
-def get_store() -> InMemoryVectorStore:
-	global _shared_store
-	if _shared_store is not None:
-		return _shared_store  # type: ignore
-	backend = os.getenv("VECTOR_BACKEND", "memory").lower()
-	print(f"[vector_store] VECTOR_BACKEND={backend}")
-	if backend == "pinecone":
-		if Pinecone is None:
-			print("[vector_store] Pinecone SDK not installed.")
-		else:
-			try:
-				index_name = os.getenv("PINECONE_INDEX", "plasticgpt")
-				dim = int(os.getenv("PINECONE_DIM", "1536"))
-				print(f"[vector_store] Attempting PineconeVectorStore index={index_name} dim={dim}")
-				_shared_store = PineconeVectorStore(index_name=index_name, dimension=dim)
-				print("[vector_store] PineconeVectorStore initialized.")
-				return _shared_store  # type: ignore
-			except Exception as e:
-				print(f"[vector_store] Pinecone init failed: {e}")
-	print("[vector_store] Using InMemoryVectorStore.")
-	_shared_store = InMemoryVectorStore()
-	return _shared_store
-
-
-__all__ = ["Document", "InMemoryVectorStore", "get_store"]
+__all__ = ["Document", "CachedVectorStore", "get_store"]
 

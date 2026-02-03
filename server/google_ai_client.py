@@ -5,7 +5,7 @@ Requirements:
 
 Environment Variables:
     GOOGLE_API_KEY: Your Google AI API key
-    GOOGLE_AI_MODEL: Model name (default: gemini-1.5-flash)
+    GOOGLE_AI_MODEL: Model name (default: gemini-2.0-flash)
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ try:
 except Exception:
     pass
 
-# Default model - Gemini 1.5 Flash is fast and cost-effective
-DEFAULT_MODEL = os.getenv("GOOGLE_AI_MODEL", "gemini-1.5-flash")
+# Default model - Gemini 2.0 Flash is fast and cost-effective
+DEFAULT_MODEL = os.getenv("GOOGLE_AI_MODEL", "gemini-2.0-flash")
 
 # Import Google GenAI (new SDK)
 _genai = None

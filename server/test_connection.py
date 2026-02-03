@@ -51,7 +51,7 @@ def test_google_ai():
     print("\nTesting chat generation...")
     try:
         response = client.models.generate_content(
-            model="gemini-1.5-flash",
+            model="gemini-2.0-flash",
             contents="Say 'Hello, the API is working!' in exactly those words.",
         )
         print(f"✓ Chat works! Response: {response.text[:100]}")

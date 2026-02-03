@@ -46,7 +46,7 @@ gcloud run deploy %SERVICE_NAME% ^
     --min-instances 0 ^
     --max-instances 3 ^
     --set-secrets "GOOGLE_API_KEY=google-api-key:latest" ^
-    --set-env-vars "GOOGLE_AI_MODEL=gemini-1.5-flash,GOOGLE_EMBED_MODEL=text-embedding-004,MAX_STARTUP_DOCS=0"
+    --set-env-vars "GOOGLE_AI_MODEL=gemini-2.0-flash,GOOGLE_EMBED_MODEL=text-embedding-004,MAX_STARTUP_DOCS=0"
 
 if %ERRORLEVEL% neq 0 (
     echo.

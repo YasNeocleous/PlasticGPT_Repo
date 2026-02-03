@@ -7,6 +7,8 @@ import glob
 
 from fastapi import FastAPI, Body, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -150,36 +152,44 @@ async def _load_corpus():
 async def chat(body: dict = Body(...)):
 	"""Accept either a JSON body with {"question": "...", "k": n}
 	or the frontend-style {"messages": [{role, content}, ...], "k": n}.
-	If messages are provided, the last user message is used as the question.
+	If messages are provided, maintains conversation context.
 	"""
-	# Normalize incoming payloads to a question string and optional k
+	# Normalize incoming payloads
 	question = None
+	conversation_history = []
 	k = None
+	
 	if isinstance(body, dict):
 		if "question" in body:
+			# Simple question format - no history
 			question = body.get("question")
 			k = body.get("k")
 		elif "messages" in body and isinstance(body.get("messages"), list):
 			msgs = body.get("messages")
-			# Prefer the last message with role 'user'
+			k = body.get("k")
+			
+			# Build conversation history from all messages
+			for m in msgs:
+				if isinstance(m, dict) and m.get("content"):
+					role = m.get("role", "user")
+					content = m.get("content", "")
+					# Skip empty messages and system messages
+					if content.strip() and role in ("user", "assistant"):
+						conversation_history.append({"role": role, "content": content})
+			
+			# Extract the last user question for RAG retrieval
 			for m in reversed(msgs):
 				if isinstance(m, dict) and m.get("role") == "user" and m.get("content"):
 					question = m.get("content")
 					break
-			# Fallback: use last message content if present
-			if question is None and msgs:
-				last = msgs[-1]
-				if isinstance(last, dict):
-					question = last.get("content")
-			k = body.get("k")
 
 	# Validate
 	if not question:
-		# Mirror previous validation shape for compatibility with clients
 		raise HTTPException(status_code=422, detail=[{"type": "missing", "loc": ["body", "question"], "msg": "Field required"}])
 
 	client = get_chat_client(DEFAULT_MODEL)
 	store = get_store()
+	
 	# Embed the query and retrieve similar docs
 	q_vec = embed_texts([question])[0]
 	docs = store.similarity_search(q_vec, k=k or 4)
@@ -191,12 +201,32 @@ async def chat(body: dict = Body(...)):
 			f"Excerpt: {d.page_content[:750]}"
 		)
 	context = "\n\n---\n".join(context_blocks) if context_blocks else "(No context found)"
-	user_message = (
-		f"Context studies (may be partial excerpts):\n{context}\n\nQuestion: {question}\n"
-	)
+	
+	# Build messages for the model
+	if conversation_history:
+		# Use conversation history for context
+		# Modify the last user message to include RAG context
+		messages_for_model = []
+		for i, msg in enumerate(conversation_history):
+			if i == len(conversation_history) - 1 and msg["role"] == "user":
+				# Last user message - add RAG context
+				augmented_content = (
+					f"Context studies (may be partial excerpts):\n{context}\n\n"
+					f"Question: {msg['content']}\n"
+				)
+				messages_for_model.append({"role": "user", "content": augmented_content})
+			else:
+				messages_for_model.append(msg)
+	else:
+		# Simple question without history
+		user_message = (
+			f"Context studies (may be partial excerpts):\n{context}\n\nQuestion: {question}\n"
+		)
+		messages_for_model = [{"role": "user", "content": user_message}]
+	
 	answer = client.generate(
 		system=SYSTEM_PROMPT,
-		messages=[{"role": "user", "content": user_message}],
+		messages=messages_for_model,
 	)
 	return ChatResponse(response=answer)
 
@@ -212,6 +242,30 @@ async def ai_status():
 	status = get_ai_status()
 	status["provider"] = "google"
 	return status
+
+
+# Serve static frontend files in production
+# The static folder is created during Docker build from the client/dist output
+STATIC_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
+
+if os.path.exists(STATIC_DIR):
+	# Serve static assets (JS, CSS, images)
+	app.mount("/assets", StaticFiles(directory=os.path.join(STATIC_DIR, "assets")), name="assets")
+	
+	# Serve index.html for all non-API routes (SPA routing)
+	@app.get("/{full_path:path}")
+	async def serve_spa(full_path: str):
+		# If it's an API route, let it 404 naturally
+		if full_path.startswith("api/"):
+			raise HTTPException(status_code=404, detail="Not found")
+		
+		# Check if specific file exists
+		file_path = os.path.join(STATIC_DIR, full_path)
+		if os.path.isfile(file_path):
+			return FileResponse(file_path)
+		
+		# Default to index.html for SPA routing
+		return FileResponse(os.path.join(STATIC_DIR, "index.html"))
 
 
 __all__ = ["app", "chat"]

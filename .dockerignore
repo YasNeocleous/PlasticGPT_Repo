@@ -6,9 +6,11 @@ __pycache__/
 .git/
 .vscode/
 .idea/
-client/
 node_modules/
-*.md
+client/node_modules/
+client/dist/
 fly.toml
 cloudbuild.yaml
 .pytest_cache/
+*.md
+!README.md

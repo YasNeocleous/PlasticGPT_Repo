@@ -59,7 +59,7 @@ gcloud run deploy plasticgpt `
     --memory 2Gi `
     --timeout 300 `
     --set-secrets "GOOGLE_API_KEY=google-api-key:latest" `
-    --set-env-vars "GOOGLE_AI_MODEL=gemini-1.5-flash,GOOGLE_EMBED_MODEL=text-embedding-004,MAX_STARTUP_DOCS=0"
+    --set-env-vars "GOOGLE_AI_MODEL=gemini-2.0-flash,GOOGLE_EMBED_MODEL=text-embedding-004,MAX_STARTUP_DOCS=0"
 ```
 
 ---

@@ -14,8 +14,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -25,6 +25,9 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+
+# Keep client/src/lib (frontend utilities)
+!client/src/lib/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template

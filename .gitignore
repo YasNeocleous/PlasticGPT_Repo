@@ -214,3 +214,4 @@ pubmed_data/
 =======
 node_modules/
 .vscode/
+server/vector_cache.json
